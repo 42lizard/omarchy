@@ -1,0 +1,63 @@
+_omarchy() {
+  setopt local_options null_glob
+
+  local -a words candidates
+  local cur prefix omarchy_path bin_dir file basename rest next args enum
+  local -A seen
+  local i part
+
+  words=(${(z)LBUFFER})
+  cur=${words[-1]:-}
+  [[ $LBUFFER == *' ' ]] && cur=""
+
+  omarchy_path=$(command -v omarchy 2>/dev/null) || return 1
+  bin_dir=$(dirname -- "$(readlink -f -- "$omarchy_path" 2>/dev/null || printf '%s' "$omarchy_path")")
+  [[ -d $bin_dir ]] || return 1
+
+  prefix="omarchy"
+  for ((i = 2; i <= ${#words[@]}; i++)); do
+    if (( i == ${#words[@]} )) && [[ -n $cur ]]; then
+      continue
+    fi
+    part="${words[i]}"
+    [[ -z $part || $part == -* ]] && continue
+    prefix+="-$part"
+  done
+
+  for file in "$bin_dir/$prefix"-*; do
+    [[ -f $file && -x $file ]] || continue
+    basename="${file##*/}"
+    rest="${basename#"$prefix"-}"
+    next="${rest%%-*}"
+    if [[ -n $next && -z ${seen[$next]:-} ]]; then
+      seen[$next]=1
+      candidates+=("$next")
+    fi
+  done
+
+  if (( ${#words[@]} <= 1 )); then
+    candidates+=("commands")
+  fi
+
+  if [[ ${words[2]:-} == "commands" ]] && (( ${#words[@]} >= 2 )); then
+    candidates+=("--all" "--json" "--markdown" "--check")
+  fi
+
+  if (( ${#candidates[@]} == 0 )) && [[ -x $bin_dir/$prefix ]]; then
+    args=$(grep -m 1 '^# omarchy:args=<' "$bin_dir/$prefix" 2>/dev/null)
+    enum="${args#*<}"
+    enum="${enum%%>*}"
+
+    if [[ $enum == *"|"* && $enum != *" "* ]]; then
+      candidates=(${(s:|:)enum})
+    fi
+  fi
+
+  compadd -- "${candidates[@]}"
+}
+
+compdef _omarchy omarchy
+
+# Hide individual omarchy-* binaries from initial-word command completion;
+# the unified `omarchy` dispatcher is the user-facing entry point.
+zstyle ':completion:*:-command-:*' ignored-patterns 'omarchy-*'
