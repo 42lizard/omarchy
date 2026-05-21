@@ -4,29 +4,140 @@ HISTSIZE=32768
 SAVEHIST=$HISTSIZE
 setopt append_history
 setopt share_history
+setopt hist_ignore_dups
 setopt hist_ignore_all_dups
 setopt hist_ignore_space
 setopt hist_reduce_blanks
+setopt hist_verify
 setopt inc_append_history
 
 # Completion and keybindings
-autoload -Uz compinit
-compinit
+setopt combining_chars
+setopt complete_in_word
+setopt always_to_end
+setopt menu_complete
+setopt auto_menu
+setopt auto_cd
+setopt chase_links
+setopt extended_glob
+setopt interactive_comments
+unsetopt beep
 
-zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
+autoload -Uz compinit
+compinit -i
+
+zmodload zsh/complist
+
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=* l:|=*'
 zstyle ':completion:*' menu select
-zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+if [[ -z $LS_COLORS ]] && (( $+commands[dircolors] )); then
+  eval "$(dircolors -b)"
+fi
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+zstyle -d ':completion:*' file-list
+zstyle ':completion:*' list-prompt ''
+zstyle ':completion:*' select-prompt ''
+zstyle ':completion:*' match-hidden-files off
 zstyle ':completion:*' squeeze-slashes true
 zstyle ':completion:*' special-dirs true
 zstyle ':completion:*' completer _complete _match _approximate
 
 bindkey -e
-bindkey '^[[A' history-beginning-search-backward
-bindkey '^[[B' history-beginning-search-forward
+bindkey '^[[A' history-search-backward
+bindkey '^[[B' history-search-forward
 bindkey '^[[C' forward-char
 bindkey '^[[D' backward-char
 bindkey '^I' menu-complete
 bindkey '^[[Z' reverse-menu-complete
+bindkey -M menuselect '^[[Z' reverse-menu-complete
+
+if command -v fzf &>/dev/null; then
+  fzf-file-widget() {
+    local fd_cmd current_token expanded_token selected
+
+    fd_cmd=$(command -v fd || command -v fdfind || echo "fd")
+    current_token="${LBUFFER##* }"
+    expanded_token="${current_token/#\~/$HOME}"
+
+    if [[ $expanded_token == */ ]] && [[ -d $expanded_token ]]; then
+      selected=$("$fd_cmd" --color=always --base-directory="$expanded_token" 2>/dev/null |
+        fzf --multi --ansi --prompt="Directory $expanded_token> " \
+          --preview="[[ -d $expanded_token{} ]] && ls -lah $expanded_token{} || bat --color=always --style=numbers $expanded_token{} 2>/dev/null || cat $expanded_token{}")
+      [[ -n $selected ]] && selected="${expanded_token}${selected}"
+    else
+      selected=$("$fd_cmd" --color=always 2>/dev/null |
+        fzf --multi --ansi --prompt="Directory> " --query="$expanded_token" \
+          --preview="[[ -d {} ]] && ls -lah {} || bat --color=always --style=numbers {} 2>/dev/null || cat {}")
+    fi
+
+    if [[ -n $selected ]]; then
+      selected=$(printf '%q' "$selected")
+      LBUFFER="${LBUFFER%$current_token}${selected} "
+    fi
+
+    zle reset-prompt
+  }
+  zle -N fzf-file-widget
+  bindkey '^[^F' fzf-file-widget
+
+  fzf-git-log-widget() {
+    local selected
+
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+      echo "Not in a git repository." >&2
+      return 1
+    fi
+
+    selected=$(git log --no-show-signature --color=always \
+      --format='%C(bold blue)%h%C(reset) - %C(cyan)%ad%C(reset) %C(yellow)%d%C(reset) %C(normal)%s%C(reset)  %C(dim normal)[%an]%C(reset)' \
+      --date=short |
+      fzf --ansi --multi --scheme=history --prompt="Git Log> " \
+        --preview='git show --color=always --stat --patch {1}' \
+        --preview-window=right:50%:wrap |
+      awk '{print $1}' |
+      xargs -I {} git rev-parse {} 2>/dev/null |
+      tr '\n' ' ')
+
+    [[ -n $selected ]] && LBUFFER="${LBUFFER}${selected}"
+
+    zle reset-prompt
+  }
+  zle -N fzf-git-log-widget
+  bindkey '^[^L' fzf-git-log-widget
+
+  fzf-variables-widget() {
+    local current_token cleaned_token selected
+
+    current_token="${LBUFFER##* }"
+    cleaned_token="${current_token#\$}"
+
+    selected=$(typeset -p |
+      awk '{print $1, $2}' |
+      sort -u |
+      awk '{print $2}' |
+      fzf --multi --prompt="Variables> " --preview-window=wrap \
+        --preview='echo {} && typeset -p {} 2>/dev/null || echo "No details available"' \
+        --query="$cleaned_token")
+
+    if [[ -n $selected ]]; then
+      [[ $current_token == \$* ]] && selected="\$${selected}"
+      LBUFFER="${LBUFFER%$current_token}${selected} "
+    fi
+
+    zle reset-prompt
+  }
+  zle -N fzf-variables-widget
+  bindkey '^[^V' fzf-variables-widget
+fi
 
 # Ensure command hashing is off for mise
 unsetopt hashcmds
+unsetopt hashdirs
+
+if [[ -f /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+  source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+fi
+
+if [[ -f /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+  source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+fi
